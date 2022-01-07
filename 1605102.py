@@ -2,33 +2,38 @@ import pandas as pd
 import numpy as np
 from scipy.linalg import eig
 from scipy.stats import norm
+import math
 
 
-obs = list()
+observation = list()
 with open('data.txt') as f:
     for value in f:
-        obs.append(float(value))
+        observation.append(float(value))
         # print(value)
+    f.close()
 
 
-states = ("el_nino", "la_nina")
+states = ["el_nino", "la_nina"]
+# print(type(states))
 
 
 lines = []
 with open('parameters.txt') as f:
     lines = f.readlines()
+    f.close()
 count = int(lines[0])
-trans_array = np.empty((count, count), float)
+transition_array = np.empty((count, count), float)
 
 for i in range(count):
     j = 0
     for value in lines[i+1].split():
-        trans_array[i][j] = float(value)
+        transition_array[i][j] = float(value)
         j += 1
-# print(trans_array)
+# print(transition_array)
+
 
 mean_array = []
-std_array = []
+variance_array = []
 
 for value in lines[-2].split():
     i = 0
@@ -37,84 +42,77 @@ for value in lines[-2].split():
 
 for value in lines[-1].split():
     i = 0
-    std_array.append(float(value))
+    variance_array.append(math.sqrt(float(value)))
     i += 1
-
-
 # print(mean_array)
-# print(std_array)
+# print(variance_array)
 
-transition_mat = np.matrix(trans_array)
 
-S, U = eig(transition_mat.T)
+transition_matrix = np.matrix(transition_array)
+S, U = eig(transition_matrix.T)
 stationary = np.array(U[:, np.where(np.abs(S - 1.) < 1e-8)[0][0]].flat)
 start_p = stationary / np.sum(stationary)
 # print(start_p)
 
 
-# norm.pdf(emission_val,  mean_of_distribution, standard_deviation_of_distribution)
-
-
-def viterbi(obs, states, start_p, trans_p):
-    V = [{}]
-    for st in states:
-        i = 0
-        V[0][st] = {"prob": start_p[i] *
-                    norm.pdf(obs[0],  mean_array[i], std_array[i]), "prev": None}
-        # print(mean_array[i])
+def viterbi(observation, states, start_p, transition_probability):
+    Viterbi = [{}]
+    i = 0
+    for state in states:
+        print(state)
+        emission_probability = math.log(
+            norm.pdf(observation[0],  mean_array[i], variance_array[i]))
+        Viterbi[0][state] = {"prob": math.log(start_p[i]) +
+                             emission_probability, "prev": None}
         i += 1
 
-# Run Viterbi when t > 0
-    for t in range(1, len(obs)):
-        V.append({})
-        for st in states:
-            i = 0
-            max_tr_prob = V[t - 1][states[0]]["prob"] * trans_p[0][i]
-            prev_st_selected = 0
-            for prev_st in states[1:]:
-                j = 1
-                tr_prob = V[t - 1][prev_st]["prob"] * trans_p[j][i]
-                if tr_prob > max_tr_prob:
-                    max_tr_prob = tr_prob
-                    prev_st_selected = prev_st
+    for t in range(1, len(observation)):
+        Viterbi.append({})
+        i = 0
+
+        for state in states:
+            maximum_transition_probability = Viterbi[t - 1][states[0]]["prob"] + \
+                math.log(transition_probability[0][i])
+            prev_state_selected = states[0]
+            j = 1
+
+            for previous_state in states[1:]:
+                transition_probability = Viterbi[t - 1][previous_state]["prob"] + \
+                    math.log(transition_probability[j][i])
+                if transition_probability > maximum_transition_probability:
+                    maximum_transition_probability = transition_probability
+                    prev_state_selected = previous_state
                 j += 1
-            max_prob = max_tr_prob * \
-                norm.pdf(obs[t],  mean_array[i], std_array[i])
-            # max_prob = max_tr_prob * emit_p[st][obs[t]]
-            V[t][st] = {"prob": max_prob, "prev": prev_st_selected}
+            emission_probability = math.log(norm.pdf(observation[t],
+                                                     mean_array[i], variance_array[i]))
+            maximum_probability = maximum_transition_probability + emission_probability
+            Viterbi[t][state] = {"prob": maximum_probability,
+                                 "prev": prev_state_selected}
             i += 1
 
-    for line in dptable(V):
-        print(line)
+    state_list = []
+    maximum_probability = 0.0
+    best_state = None
 
-    opt = []
-    max_prob = 0.0
-    best_st = None
-    # Get most probable state and its backtrack
-    for st, data in V[-1].items():
-        if data["prob"] > max_prob:
-            max_prob = data["prob"]
-            best_st = st
-    opt.append(best_st)
-    previous = best_st
+    for state, data in Viterbi[-1].items():
+        if -1 * data["prob"] > maximum_probability:
+            maximum_probability = data["prob"]
+            best_state = state
 
-    # Follow the backtrack till the first observation
-    for t in range(len(V) - 2, -1, -1):
-        opt.insert(0, V[t + 1][previous]["prev"])
-        previous = V[t + 1][previous]["prev"]
+    state_list.append(best_state)
+    previous = best_state
 
-    print("The steps of states are " + " ".join(opt) +
-          " with highest probability of %s" % max_prob)
+    for t in range(len(Viterbi) - 2, -1, -1):
+        state_list.insert(0, Viterbi[t + 1][previous]["prev"])
+        previous = Viterbi[t + 1][previous]["prev"]
 
-
-def dptable(V):
-    # Print a table of steps from dictionary
-    yield " " * 5 + "     ".join(("%3d" % i) for i in range(len(V)))
-    for state in V[0]:
-        yield "%.7s: " % state + " ".join("%.7s" % ("%lf" % v[state]["prob"]) for v in V)
+    textfile = open("viterbi_without_baum.txt", "w")
+    for i in range(len(state_list)):
+        textfile.write("\"" + state_list[i]+"\"" + "\n")
+    textfile.close()
 
 
-viterbi(obs,
+viterbi(observation,
         states,
         start_p,
-        trans_array)
+        transition_array)
